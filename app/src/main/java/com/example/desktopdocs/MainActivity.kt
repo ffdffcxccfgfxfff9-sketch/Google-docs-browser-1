@@ -1,124 +1,138 @@
 package com.example.desktopdocs
 
-import android.annotation.SuppressLint
+import android.content.ActivityNotFoundException
+import android.content.Intent
+import android.graphics.Color
+import android.net.Uri
 import android.os.Bundle
-import android.content.Context
-import android.print.PrintAttributes
-import android.print.PrintManager
-import android.webkit.CookieManager
-import android.webkit.WebResourceRequest
-import android.webkit.WebSettings
-import android.webkit.WebView
-import android.webkit.WebViewClient
-import androidx.activity.OnBackPressedCallback
+import android.util.TypedValue
+import android.view.Gravity
+import android.view.ViewGroup
+import android.widget.LinearLayout
+import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
-import com.google.android.material.floatingactionbutton.FloatingActionButton
+import androidx.browser.customtabs.CustomTabColorSchemeParams
+import androidx.browser.customtabs.CustomTabsIntent
+import com.google.android.material.button.MaterialButton
 
 class MainActivity : AppCompatActivity() {
 
-    private lateinit var webView: WebView
-    private var currentScale = 0.45f
+    companion object {
+        private const val CHROME_PACKAGE = "com.android.chrome"
+        private const val GOOGLE_DOCS_URL = "https://docs.google.com/document/u/0/"
+        private const val GOOGLE_DRIVE_URL = "https://drive.google.com/drive/my-drive"
+    }
 
-    @SuppressLint("SetJavaScriptEnabled")
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        setContentView(R.layout.activity_main)
+        setContentView(createFallbackView())
 
-        webView = findViewById(R.id.webView)
-        setupWebView()
-        setupBackNavigation()
-        setupActionButtons()
-
-        webView.loadUrl("https://docs.google.com")
+        if (savedInstanceState == null) {
+            openInCustomTab(GOOGLE_DOCS_URL)
+        }
     }
 
-    @SuppressLint("SetJavaScriptEnabled")
-    private fun setupWebView() {
-        // تفعيل الكوكيز لحفظ تسجيل الدخول في حساب Google
-        val cookieManager = CookieManager.getInstance()
-        cookieManager.setAcceptCookie(true)
-        cookieManager.setAcceptThirdPartyCookies(webView, true)
-        webView.settings.apply {
-            javaScriptEnabled = true
-            domStorageEnabled = true
-            databaseEnabled = true
-            userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
-            useWideViewPort = true
-            loadWithOverviewMode = true
-            builtInZoomControls = true
-            displayZoomControls = false
-            cacheMode = WebSettings.LOAD_DEFAULT
-        }
+    private fun openInCustomTab(url: String) {
+        val uri = Uri.parse(url)
+        val colorSchemeParams = CustomTabColorSchemeParams.Builder()
+            .setToolbarColor(Color.parseColor("#0F172A"))
+            .setNavigationBarColor(Color.parseColor("#0F172A"))
+            .build()
 
-        webView.webViewClient = object : WebViewClient() {
-            override fun shouldOverrideUrlLoading(
-                view: WebView?,
-                request: WebResourceRequest?
-            ): Boolean {
-                // إبقاء التصفح داخل WebView وعدم التحويل لتطبيق خارجي
-                return false
-            }
+        val customTabsIntent = CustomTabsIntent.Builder()
+            .setDefaultColorSchemeParams(colorSchemeParams)
+            .setColorScheme(CustomTabsIntent.COLOR_SCHEME_DARK)
+            .setShowTitle(true)
+            .setUrlBarHidingEnabled(true)
+            .build()
 
-            override fun onPageFinished(view: WebView?, url: String?) {
-                super.onPageFinished(view, url)
-                injectMobileFriendlyCSS()
+        try {
+            customTabsIntent.intent.setPackage(CHROME_PACKAGE)
+            customTabsIntent.launchUrl(this, uri)
+        } catch (_: ActivityNotFoundException) {
+            // Fallback if Google Chrome is not installed: launch default Custom Tabs provider
+            try {
+                customTabsIntent.intent.setPackage(null)
+                customTabsIntent.launchUrl(this, uri)
+            } catch (_: ActivityNotFoundException) {
+                startActivity(Intent(Intent.ACTION_VIEW, uri))
             }
         }
     }
 
-    private fun injectMobileFriendlyCSS() {
-        val jsCode = """
-            (function() {
-                var meta = document.querySelector('meta[name="viewport"]');
-                if (!meta) {
-                    meta = document.createElement('meta');
-                    meta.name = 'viewport';
-                    document.head.appendChild(meta);
-                }
-                meta.content = 'width=1024, initial-scale=0.45, maximum-scale=3, user-scalable=yes';
-                var existing = document.getElementById('docsdroid-injected-css');
-                if (existing) existing.remove();
-                var style = document.createElement('style');
-                style.id = 'docsdroid-injected-css';
-                style.textContent = "/* جعل شريط الأدوات قابلاً للسحب أفقياً باللمس */\n#docs-toolbar-wrapper {\n    overflow-x: auto !important;\n    white-space: nowrap !important;\n    -webkit-overflow-scrolling: touch !important;\n}\n\n/* تقليص الهوامش الجانبية غير الضرورية لتوفير مساحة للورقة */\n.kix-appview-editor {\n    overflow-x: auto !important;\n}\n#docs-chrome {\n    max-width: 100vw !important;\n}";
-                document.head.appendChild(style);
-            })();
-        """.trimIndent()
-
-        webView.evaluateJavascript(jsCode, null)
-    }
-
-    private fun setupActionButtons() {
-        findViewById<FloatingActionButton>(R.id.fabZoom).setOnClickListener {
-            currentScale = when {
-                currentScale < 0.65f -> 0.75f
-                currentScale < 0.95f -> 1.0f
-                else -> 0.45f
-            }
-            val jsZoom = "document.querySelector('meta[name=\"viewport\"]')?.setAttribute('content', 'width=1024, initial-scale=' + $currentScale + ', maximum-scale=3, user-scalable=yes');"
-            webView.evaluateJavascript(jsZoom, null)
+    private fun createFallbackView(): LinearLayout {
+        val dp = { value: Int ->
+            TypedValue.applyDimension(
+                TypedValue.COMPLEX_UNIT_DIP,
+                value.toFloat(),
+                resources.displayMetrics
+            ).toInt()
         }
-        findViewById<FloatingActionButton>(R.id.fabExportPdf).setOnClickListener {
-            exportDocumentToPdf()
+
+        val root = LinearLayout(this).apply {
+            orientation = LinearLayout.VERTICAL
+            gravity = Gravity.CENTER
+            setBackgroundColor(Color.parseColor("#0F172A"))
+            setPadding(dp(24), dp(24), dp(24), dp(24))
+            layoutParams = ViewGroup.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.MATCH_PARENT
+            )
         }
-    }
 
-    private fun exportDocumentToPdf() {
-        val printManager = getSystemService(Context.PRINT_SERVICE) as PrintManager
-        val jobName = "Desktop Docs_Document"
-        val printAdapter = webView.createPrintDocumentAdapter(jobName)
-        printManager.print(jobName, printAdapter, PrintAttributes.Builder().build())
-    }
+        val title = TextView(this).apply {
+            text = getString(R.string.app_name)
+            textSize = 24f
+            setTextColor(Color.parseColor("#F8FAFC"))
+            gravity = Gravity.CENTER
+        }
 
-    private fun setupBackNavigation() {
-        onBackPressedDispatcher.addCallback(this, object : OnBackPressedCallback(true) {
-            override fun handleOnBackPressed() {
-                if (webView.canGoBack()) {
-                    webView.goBack()
-                } else {
-                    finish()
-                }
+        val subtitle = TextView(this).apply {
+            text = "Choose a workspace to launch in Chrome Custom Tabs"
+            textSize = 14f
+            setTextColor(Color.parseColor("#94A3B8"))
+            gravity = Gravity.CENTER
+            setPadding(0, dp(8), 0, dp(28))
+        }
+
+        val openDocsButton = MaterialButton(this).apply {
+            text = "Open Google Docs"
+            isAllCaps = false
+            setBackgroundColor(Color.parseColor("#2563EB"))
+            setTextColor(Color.WHITE)
+            cornerRadius = dp(10)
+            minimumHeight = dp(52)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            ).apply {
+                bottomMargin = dp(12)
             }
-        })
+            setOnClickListener { openInCustomTab(GOOGLE_DOCS_URL) }
+        }
+
+        val openDriveButton = MaterialButton(
+            this,
+            null,
+            com.google.android.material.R.attr.materialButtonOutlinedStyle
+        ).apply {
+            text = "Open Google Drive"
+            isAllCaps = false
+            setTextColor(Color.parseColor("#E2E8F0"))
+            setStrokeColorResource(android.R.color.darker_gray)
+            cornerRadius = dp(10)
+            minimumHeight = dp(52)
+            layoutParams = LinearLayout.LayoutParams(
+                ViewGroup.LayoutParams.MATCH_PARENT,
+                ViewGroup.LayoutParams.WRAP_CONTENT
+            )
+            setOnClickListener { openInCustomTab(GOOGLE_DRIVE_URL) }
+        }
+
+        root.addView(title)
+        root.addView(subtitle)
+        root.addView(openDocsButton)
+        root.addView(openDriveButton)
+        return root
     }
 }
